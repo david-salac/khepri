@@ -886,11 +886,3 @@ It:
 
 Review and adapt its hard-coded PostgreSQL include/library paths before copying
 it to a different distribution or architecture.
-
-## Licence
-
-No licence file was included with the supplied sources.
-
-Before copying this library to other codebases, add an appropriate licence or
-an explicit internal-use policy. Without one, recipients do not have clearly
-documented permission to use, modify, or redistribute the code.

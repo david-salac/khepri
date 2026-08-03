@@ -1,0 +1,12 @@
+/x64/*
+*/x64/*
+.vs/*
+debug_*
+*/debug_*
+*.slnx
+*.vcxproj
+*.vcxproj*
+*/bin/*
+bin/*
+temp/*
+*/temp/

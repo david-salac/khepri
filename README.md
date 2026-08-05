@@ -1,6 +1,6 @@
 # C++ PostgreSQL / Actian Ingres Connectors
 
-Author: David Salac <david.salac@ndph.ox.ac.uk>, University of Oxford
+Author: David Salac
 
 A small, copy-friendly C++ library that provides one application-facing API for:
 

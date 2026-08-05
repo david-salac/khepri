@@ -1,6 +1,6 @@
 # C++ PostgreSQL / Actian Ingres Connectors
 
-Author: David Salac
+Author: David Salac <david.salac@ndph.ox.ac.uk>, University of Oxford
 
 A small, copy-friendly C++ library that provides one application-facing API for:
 
@@ -10,7 +10,7 @@ A small, copy-friendly C++ library that provides one application-facing API for:
 
 The library is intended to be copied directly into another codebase rather than installed as a separate package.
 
-> Current library version declared by the public header: **1.1.0**
+> Current library version declared by the public header: **1.2.0**
 
 ## What it provides
 
@@ -836,7 +836,7 @@ Example provenance block:
 
 ```text
 Vendored component: db_connectors
-Library version: 1.1.0
+Library version: 1.2.0
 Source revision: <commit or tag>
 Copied on: <YYYY-MM-DD>
 Local changes: <summary or "none">

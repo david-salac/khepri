@@ -93,4 +93,16 @@ namespace CommonUtils {
     * Provides a safe way to retrieve environment variable values for both Unix and Windows systems.
     */
     std::optional<std::string> safe_get_env(std::string_view key);
-};
+
+    /**
+    * Provides a safe way to set environment variable values for both Unix and Windows systems.
+    */
+    void safe_set_env(
+        std::string_view name,
+        std::string_view value
+    );
+    /**
+    * Provides a safe way to unset environment variable values for both Unix and Windows systems.
+    */
+    void safe_unset_env(std::string_view name);
+}

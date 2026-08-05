@@ -34,7 +34,7 @@
 
 /**
 * Generic connectors capable of working with both PostgreSQL and Actian Ingres databases, either separately or simultaneously.
-*   Version: 1.1.0
+*   Version: 1.2.0
 */
 namespace Connectors {
 
@@ -444,7 +444,7 @@ namespace Connectors {
             return output.str();
         }
         inline virtual std::string decrypt_function_expression(std::string column, std::string password) const override {
-            return std::format("AES_DECRYPT({}, '{}', 256)", column, password);
+            return std::format("VARCHAR(AES_DECRYPT({}, '{}', 256))", column, password);
         }
         inline virtual std::string encrypt_function_expression(std::string column, std::string password) const override {
             return std::format("AES_ENCRYPT({}, '{}', 256)", column, password);

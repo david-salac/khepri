@@ -102,6 +102,17 @@ void Connectors::IngresConnector::dml_delete(const std::string& query) {
 	tx.commit();
 }
 
+int Connectors::IngresConnector::next_value_in_sequence(std::string_view sequence_name) {
+	bcbpqxx::work tx(conn.value());
+
+	UniversalResult qres(tx.exec(std::format("SELECT NEXT VALUE FOR {} AS sequence_value_extracted", sequence_name)));
+	const auto row = qres.begin();
+	int value = (*row)["sequence_value_extracted"].as<int>();
+
+	tx.commit();
+	return value;
+}
+
 std::vector<unsigned char> Connectors::from_hex(std::string_view hex) {
 	if (hex.size() % 2 != 0)
 		throw std::invalid_argument("from_hex: odd-length input");
@@ -176,4 +187,16 @@ std::string Connectors::BaseConnector::transform_pseudosql_syntax(
 			password.data(), "ENCRYPT", *this),
 		password.data(), "DECRYPT", *this
 	);
+}
+
+int Connectors::PostgreSQLConnector::next_value_in_sequence(std::string_view sequence_name) {
+	pqxx::work tx{ conn.value() };
+
+	UniversalResult qres(tx.exec(std::format("SELECT nextval('{}') AS sequence_value_extracted", sequence_name)));
+	const auto row = qres.begin();
+	int value = (*row)["sequence_value_extracted"].as<int>();
+
+	tx.commit();
+
+	return value;
 }

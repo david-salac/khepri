@@ -10,7 +10,7 @@ A small, copy-friendly C++ library that provides one application-facing API for:
 
 The library is intended to be copied directly into another codebase rather than installed as a separate package.
 
-> Current library version declared by the public header: **1.2.0**
+> Current library version declared by the public header: **1.2.1**
 
 ## What it provides
 

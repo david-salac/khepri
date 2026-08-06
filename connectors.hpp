@@ -34,7 +34,7 @@
 
 /**
 * Generic connectors capable of working with both PostgreSQL and Actian Ingres databases, either separately or simultaneously.
-*   Version: 1.2.0
+*   Version: 1.2.1
 */
 namespace Connectors {
 
@@ -337,6 +337,12 @@ namespace Connectors {
         */
         virtual std::string encrypt_function_expression(std::string column, std::string password) const = 0;
 
+        /**
+         * Returns the next value from the specified sequence.
+         * This operation advances the sequence state.
+         */
+        virtual int next_value_in_sequence(std::string_view sequence_name) = 0;
+
         virtual void close() = 0;
         // To safely disconnect from the DB
         virtual ~BaseConnector() {
@@ -449,6 +455,9 @@ namespace Connectors {
         inline virtual std::string encrypt_function_expression(std::string column, std::string password) const override {
             return std::format("AES_ENCRYPT({}, '{}', 256)", column, password);
         }
+
+        virtual int next_value_in_sequence(std::string_view sequence_name) override;
+
         virtual ~IngresConnector() override {
             if (!is_closed) {
                 this->close();
@@ -541,6 +550,9 @@ namespace Connectors {
         inline virtual std::string encrypt_function_expression(std::string column, std::string password) const override {
             return std::format("pgp_sym_encrypt({}, '{}')", column, password);
         }
+
+        virtual int next_value_in_sequence(std::string_view sequence_name) override;
+
         virtual ~PostgreSQLConnector() {
             if (!is_closed) {
                 this->close();

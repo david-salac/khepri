@@ -34,7 +34,7 @@
 
 /**
 * Generic connectors capable of working with both PostgreSQL and Actian Ingres databases, either separately or simultaneously.
-*   Version: 1.2.1
+*   Version: 1.3.0
 */
 namespace Connectors {
 

@@ -99,15 +99,17 @@ int main(int argc, char* argv[])
             std::stringstream str;
             str << initial_time;
             const std::string timestamp_text = str.str();
+            std::string some_date = "2027-04-12 18:43:11";
 
             const std::string insert_sql =
                 "INSERT INTO openapi_demo "
-                "(id, description, large_value, event_time) "
+                "(id, description, large_value, event_time, some_date) "
                 "VALUES (" +
                 std::to_string(test_id) + ", " +
                 quote_sql(initial_description) + ", " +
                 std::to_string(initial_large_value) + ", " +
-                "TIMESTAMP " + quote_sql(timestamp_text) +
+                "TIMESTAMP " + quote_sql(timestamp_text) + ", " +
+                quote_sql(some_date) +
                 ")";
             connection.insert(insert_sql);
 
@@ -138,15 +140,13 @@ int main(int argc, char* argv[])
             std::cout << "Inserted demo row.\n";
         }
         catch (const std::exception& ex) {
-            std::cout << "GOOD, WE EXPECT ERROR HERE!\n";
-            std::cerr << ex.what();
+            std::cout << "=== OK, EXPECT ERROR HERE ===\n";
+            std::cerr << ex.what() << "\n";
+            std::cout << "=== END OF EXPECTED ERROR ===\n";
         }
 
         /*
          * SELECT after INSERT.
-         *
-         * event_time is cast to VARCHAR because the current wrapper's
-         * timestamp conversion expects a textual timestamp.
          */
         {
             const std::string select_sql =
@@ -154,8 +154,8 @@ int main(int argc, char* argv[])
                 "id, "
                 "description, "
                 "large_value, "
-                "CAST(event_time AS VARCHAR(40)) "
-                    "AS event_time_text "
+                "event_time, "
+                "some_date "
                 "FROM openapi_demo "
                 "WHERE id = " +
                 std::to_string(test_id);
@@ -173,13 +173,17 @@ int main(int argc, char* argv[])
                     row["large_value"].as<long long>();
 
                 const Timestamp event_time =
-                    row["event_time_text"].as<Timestamp>();
+                    row["event_time"].as<Timestamp>();
+
+                const Timestamp some_date =
+                    row["some_date"].as<Timestamp>();
 
                 std::cout
                     << "id=" << id
                     << ", description=" << description
                     << ", large_value=" << large_value
-                    << ", event_time=" << event_time;
+                    << ", event_time=" << event_time
+                    << ", some_date=" << some_date;
 
                 std::cout << '\n';
             }
@@ -202,6 +206,8 @@ int main(int argc, char* argv[])
         std::stringstream str;
             str << updated_time;
             const std::string updated_time_str = str.str();
+        
+        std::string other_date = "2024-11-28 11:58:08";
 
         {
             const std::string update_sql =
@@ -211,7 +217,8 @@ int main(int argc, char* argv[])
                 "large_value = " +
                 std::to_string(updated_large_value) + ", "
                 "event_time = TIMESTAMP " +
-                quote_sql(updated_time_str) + " "
+                quote_sql(updated_time_str) + ", " +
+                "some_date = " + quote_sql(other_date) + " " +
                 "WHERE id = " +
                 std::to_string(test_id);
 
@@ -229,8 +236,8 @@ int main(int argc, char* argv[])
                 "id, "
                 "description, "
                 "large_value, "
-                "CAST(event_time AS VARCHAR(40)) "
-                    "AS event_time_text "
+                "event_time, "
+                "some_date "
                 "FROM openapi_demo "
                 "WHERE id = " +
                 std::to_string(test_id);
@@ -248,13 +255,17 @@ int main(int argc, char* argv[])
                     row["large_value"].as<long long>();
 
                 const Timestamp event_time =
-                    row["event_time_text"].as<Timestamp>();
+                    row["event_time"].as<Timestamp>();
+
+                const Timestamp some_date =
+                    row["some_date"].as<Timestamp>();
 
                 std::cout
                     << "id=" << id
                     << ", description=" << description
                     << ", large_value=" << large_value
-                    << ", event_time=" << event_time;
+                    << ", event_time=" << event_time
+                    << ", some_date=" << some_date;
 
                 std::cout << '\n';
             }

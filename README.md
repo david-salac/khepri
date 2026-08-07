@@ -10,7 +10,7 @@ A small, copy-friendly C++ library that provides one application-facing API for:
 
 The library is intended to be copied directly into another codebase rather than installed as a separate package.
 
-> Current library version declared by the public header: **1.2.1**
+> Current library version declared by the public header: **1.3.0**
 
 ## What it provides
 
@@ -421,6 +421,7 @@ void connect();
 void select(const std::string& query);
 void insert(const std::string& query);
 void update(const std::string& query);
+void dml_delete(const std::string& query);
 bool is_empty(const std::string& query);
 void close();
 ```
@@ -438,7 +439,7 @@ Calling `result()` before a successful `select()` throws
 
 A later `select()` replaces the stored result. `close()` clears it.
 
-### `insert` and `update`
+### `insert`, `update` and `dml_delete`
 
 Both execute a statement in a transaction and commit it. They currently have
 the same behaviour and are separated to express caller intent.

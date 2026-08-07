@@ -17,13 +17,27 @@
 namespace bcbpqxx {
     namespace {
 
+        // OpenAPI is process-global, so initialization/termination is shared by all
+        // bcbpqxx connections. The mutex protects the reference count and environment
+        // handle from concurrent connection construction/destruction.
         std::mutex runtime_mutex;
         std::size_t runtime_users = 0;
+        II_PTR runtime_env_handle = nullptr;
 
+        /**
+         * @brief Classifies OpenAPI statuses that still represent successful completion.
+         * @param status OpenAPI status code.
+         * @return true for success, message, or warning statuses.
+         */
         bool ok_status(II_LONG status) {
             return status == IIAPI_ST_SUCCESS || status == IIAPI_ST_MESSAGE || status == IIAPI_ST_WARNING;
         }
 
+        /**
+         * @brief Converts an OpenAPI status code to a readable symbolic name.
+         * @param status OpenAPI status code.
+         * @return Static string describing the status.
+         */
         const char* status_name(II_LONG status) noexcept {
             switch (status) {
             case IIAPI_ST_SUCCESS:         return "IIAPI_ST_SUCCESS";
@@ -39,6 +53,11 @@ namespace bcbpqxx {
             }
         }
 
+        /**
+         * @brief Collects all diagnostic records attached to an OpenAPI error handle.
+         * @param error_handle Handle supplied by an OpenAPI operation.
+         * @return Multi-line diagnostic text, or an empty string when no handle exists.
+         */
         std::string collect_error_info(II_PTR error_handle) {
             if (!error_handle) return {};
 
@@ -74,6 +93,13 @@ namespace bcbpqxx {
             return details.str();
         }
 
+        /**
+         * @brief Builds and throws a sql_error from a completed OpenAPI operation.
+         * @param gen Generic OpenAPI completion/status structure.
+         * @param operation Name of the OpenAPI operation that failed.
+         * @param query Optional SQL text associated with the failure.
+         * @return This function does not return.
+         */
         [[noreturn]] void throw_openapi_error(
             const IIAPI_GENPARM& gen,
             std::string_view operation,
@@ -88,6 +114,12 @@ namespace bcbpqxx {
             throw sql_error(message.str(), std::string(query));
         }
 
+        /**
+         * @brief Waits for an asynchronous OpenAPI operation and validates its status.
+         * @param gen Generic completion structure populated by the OpenAPI call.
+         * @param operation Human-readable operation name for diagnostics.
+         * @param query Optional SQL text to include if the operation fails.
+         */
         void wait_complete(IIAPI_GENPARM& gen, std::string_view operation, std::string_view query = {}) {
             while (!gen.gp_completed) {
                 IIAPI_WAITPARM wait{};
@@ -97,17 +129,31 @@ namespace bcbpqxx {
             if (!ok_status(gen.gp_status)) throw_openapi_error(gen, operation, query);
         }
 
-        void acquire_runtime() {
+        /**
+         * @brief Acquires a shared reference to the process-wide OpenAPI runtime.
+         * @return Environment handle used when opening database connections.
+         * @throws sql_error if OpenAPI cannot be initialized at a supported version.
+         */
+        II_PTR acquire_runtime() {
             std::lock_guard lock(runtime_mutex);
-            if (runtime_users++ != 0) return;
+            if (runtime_users++ != 0) return runtime_env_handle;
 
             IIAPI_INITPARM init{};
-#if defined(IIAPI_VERSION_7)
+            // Use the newest OpenAPI interface exposed by the installed iiapi.h.
+            // ANSI date/time types (including IIAPI_TSWO_TYPE) require version 5+.
+#if defined(IIAPI_VERSION)
+            init.in_version = IIAPI_VERSION;
+#elif defined(IIAPI_VERSION_7)
             init.in_version = IIAPI_VERSION_7;
-#elif defined(IIAPI_VERSION_2)
-            init.in_version = IIAPI_VERSION_2;
+#elif defined(IIAPI_VERSION_6)
+            init.in_version = IIAPI_VERSION_6;
+#elif defined(IIAPI_VERSION_5)
+            init.in_version = IIAPI_VERSION_5;
 #else
-            init.in_version = IIAPI_VERSION_1;
+            runtime_users = 0;
+            throw sql_error(
+                "Ingres OpenAPI client is too old: timestamp without time zone "
+                "requires IIAPI_VERSION_5 or newer");
 #endif
             init.in_timeout = -1;
             IIapi_initialize(&init);
@@ -115,20 +161,51 @@ namespace bcbpqxx {
                 runtime_users = 0;
                 throw sql_error("IIapi_initialize failed");
             }
+
+            // For OpenAPI version 2+, initialization creates an environment
+            // handle. Connections must be opened in that environment; otherwise
+            // they may negotiate using the legacy/default API context.
+            runtime_env_handle = init.in_envHandle;
+            return runtime_env_handle;
         }
 
+        /**
+         * @brief Releases one reference to the process-wide OpenAPI runtime.
+         *
+         * The final user releases the environment and terminates OpenAPI. Errors are
+         * intentionally not propagated because this helper is used during cleanup.
+         */
         void release_runtime() noexcept {
             std::lock_guard lock(runtime_mutex);
             if (runtime_users == 0 || --runtime_users != 0) return;
+
+            if (runtime_env_handle) {
+                IIAPI_RELENVPARM rel{};
+                rel.re_envHandle = runtime_env_handle;
+                IIapi_releaseEnv(&rel);
+                runtime_env_handle = nullptr;
+            }
+
             IIAPI_TERMPARM term{};
             IIapi_terminate(&term);
         }
 
+        /**
+         * @brief Removes trailing spaces and NUL padding from fixed-width character data.
+         * @param s Decoded character value.
+         * @return Trimmed string.
+         */
         std::string trim_right(std::string s) {
             while (!s.empty() && (s.back() == ' ' || s.back() == '\0')) s.pop_back();
             return s;
         }
 
+        /**
+         * @brief Formats arbitrary binary data using Ingres-style x'...' notation.
+         * @param p Pointer to the first byte.
+         * @param n Number of bytes to encode.
+         * @return Lower-case hexadecimal string wrapped in x'...'.
+         */
         std::string hex_bytes(const unsigned char* p, std::size_t n) {
             std::ostringstream out;
             out << "x'" << std::hex << std::setfill('0');
@@ -137,6 +214,12 @@ namespace bcbpqxx {
             return out.str();
         }
 
+        /**
+         * @brief Safely loads a trivially copyable value from potentially unaligned bytes.
+         * @tparam T Destination scalar type.
+         * @param ptr Address of the source bytes.
+         * @return Value copied from the source buffer.
+         */
         template<class T>
         T load_unaligned(const void* ptr) {
             T value{};
@@ -144,6 +227,50 @@ namespace bcbpqxx {
             return value;
         }
 
+        /**
+         * @brief Converts an OpenAPI date/time value to fixed-width character text.
+         * @param source_desc Descriptor describing the source OpenAPI datatype.
+         * @param source_value Binary value returned by OpenAPI.
+         * @return Human-readable text, falling back to hexadecimal bytes if conversion fails.
+         */
+        std::string convert_to_varchar40(const IIAPI_DESCRIPTOR& source_desc, const IIAPI_DATAVALUE& source_value) {
+            // OpenAPI represents ANSI date/time values in binary structures. Convert
+            // those values through the API instead of exposing their raw bytes.
+            // A 40-byte character target is large enough for Ingres timestamp text,
+            // including fractional seconds and a time-zone suffix when present.
+            std::array<char, 40> text{};
+
+            IIAPI_CONVERTPARM cv{};
+            cv.cv_srcDesc = source_desc;
+            cv.cv_srcValue = source_value;
+
+            cv.cv_dstDesc.ds_dataType = IIAPI_CHA_TYPE;
+            cv.cv_dstDesc.ds_nullable = FALSE;
+            cv.cv_dstDesc.ds_length = static_cast<II_UINT2>(text.size());
+            cv.cv_dstDesc.ds_precision = 0;
+            cv.cv_dstDesc.ds_scale = 0;
+            cv.cv_dstDesc.ds_columnType = source_desc.ds_columnType;
+            cv.cv_dstDesc.ds_columnName = nullptr;
+
+            cv.cv_dstValue.dv_null = FALSE;
+            cv.cv_dstValue.dv_length = static_cast<II_UINT2>(text.size());
+            cv.cv_dstValue.dv_value = text.data();
+
+            IIapi_convertData(&cv);
+            if (cv.cv_status != IIAPI_ST_SUCCESS) {
+                const auto* bytes = static_cast<const unsigned char*>(source_value.dv_value);
+                return hex_bytes(bytes, source_value.dv_length);
+            }
+
+            return trim_right(std::string(text.data(), cv.cv_dstValue.dv_length));
+        }
+
+        /**
+         * @brief Converts one OpenAPI column value to the library's textual representation.
+         * @param d Column descriptor identifying the source datatype.
+         * @param v Raw value buffer returned by IIapi_getColumns().
+         * @return Decoded text; SQL NULL is represented by an empty string and tracked separately.
+         */
         std::string decode_value(const IIAPI_DESCRIPTOR& d, const IIAPI_DATAVALUE& v) {
             if (v.dv_null || v.dv_value == nullptr) return {};
             const auto* bytes = static_cast<const unsigned char*>(v.dv_value);
@@ -182,6 +309,16 @@ namespace bcbpqxx {
             case IIAPI_BOOL_TYPE:
                 return (n && bytes[0]) ? "true" : "false";
 
+            case IIAPI_DTE_TYPE:
+            case IIAPI_DATE_TYPE:
+            case IIAPI_TIME_TYPE:
+            case IIAPI_TMWO_TYPE:
+            case IIAPI_TMTZ_TYPE:
+            case IIAPI_TS_TYPE:
+            case IIAPI_TSWO_TYPE:
+            case IIAPI_TSTZ_TYPE:
+                return convert_to_varchar40(d, v);
+
             case IIAPI_BYTE_TYPE:
             case IIAPI_VBYTE_TYPE:
             case IIAPI_LBYTE_TYPE:
@@ -191,12 +328,17 @@ namespace bcbpqxx {
                 return hex_bytes(bytes, n);
 
             default:
-                // Decimal, money, date/time, intervals, Unicode and newer types need
+                // Decimal, money, intervals, Unicode and newer types still need
                 // IIapi_formatData/IIapi_convertData or an explicit CAST in SQL.
                 return hex_bytes(bytes, n);
             }
         }
 
+        /**
+         * @brief Parses the compact bcbpqxx connection-string syntax.
+         * @param text Space-separated target and key=value tokens.
+         * @return Structured connection options.
+         */
         connection_options parse_connection_string(std::string_view text) {
             connection_options out;
             std::string token;
@@ -220,6 +362,8 @@ namespace bcbpqxx {
 
     } // namespace
 
+    // Result storage is shared so lightweight field_ref/row_ref objects can safely
+    // outlive temporary iterator expressions without copying every field value.
     struct field_ref::value {
         bool null{ true };
         std::string text;
@@ -235,8 +379,12 @@ namespace bcbpqxx {
         std::vector<std::string> columns;
     };
 
+    // Keep OpenAPI-specific handles out of the public header. The negotiated API
+    // level is retained here for diagnostics and future capability checks.
     struct connection::impl {
         II_PTR handle{ nullptr };
+        II_PTR environment{ nullptr };
+        II_LONG api_level{ -1 };
         connection_options options;
         bool runtime_acquired{ false };
     };
@@ -283,10 +431,12 @@ namespace bcbpqxx {
     result::const_iterator result::end() const noexcept { return const_iterator(this, size()); }
 
     connection::connection(const connection_options& options) : impl_(std::make_unique<impl>()) {
+        // Acquire the shared OpenAPI environment before creating the physical DBMS
+        // connection so the connection inherits the requested API capabilities.
         impl_->options = options;
         if (impl_->options.target.empty()) throw usage_error("Ingres target/database is empty");
 
-        acquire_runtime();
+        impl_->environment = acquire_runtime();
         impl_->runtime_acquired = true;
 
         IIAPI_CONNPARM p{};
@@ -294,13 +444,21 @@ namespace bcbpqxx {
         p.co_username = impl_->options.user ? const_cast<char*>(impl_->options.user->c_str()) : nullptr;
         p.co_password = impl_->options.password ? const_cast<char*>(impl_->options.password->c_str()) : nullptr;
         p.co_timeout = impl_->options.timeout_seconds;
-        p.co_connHandle = nullptr;
+        // Pass the environment returned by IIapi_initialize(). This preserves
+        // the requested API version when the server connection is negotiated.
+        p.co_connHandle = impl_->environment;
         p.co_tranHandle = nullptr;
+        // co_type is ignored when co_connHandle is NULL, but becomes mandatory
+        // when an environment handle is supplied. Zero is not a valid type.
+        p.co_type = IIAPI_CT_SQL;
 
+        // OpenAPI calls complete asynchronously. wait_complete() drives the API
+        // until the connection attempt has either completed successfully or failed.
         IIapi_connect(&p);
         try {
             wait_complete(p.co_genParm, "IIapi_connect");
             impl_->handle = p.co_connHandle;
+            impl_->api_level = p.co_apiLevel;
         }
         catch (...) {
             if (p.co_connHandle) {
@@ -344,6 +502,8 @@ namespace bcbpqxx {
     work::~work() { if (!finished_) { try { abort(); } catch (...) {} } }
 
     result work::exec(std::string_view query) {
+        // A work object has one lifecycle: statements may execute until commit() or
+        // abort() marks it finished. Reuse after that point is treated as misuse.
         if (finished_) throw usage_error("transaction is already finished");
         if (!connection_ || !connection_->is_open()) throw usage_error("connection is closed");
 
@@ -356,10 +516,14 @@ namespace bcbpqxx {
         qp.qy_tranHandle = transaction_;
         qp.qy_stmtHandle = nullptr;
 
+        // Submitting the SQL may create both a statement handle and the transaction
+        // handle. Preserve the latter so commit()/abort() can finish the same unit of work.
         IIapi_query(&qp);
         II_PTR statement = qp.qy_stmtHandle;
         transaction_ = qp.qy_tranHandle;
 
+        // Statement handles are always closed, including exception paths. Cleanup
+        // failures are suppressed so they do not hide the original database error.
         auto close_statement = [&]() noexcept {
             if (!statement) return;
             IIAPI_CLOSEPARM cp{};
@@ -396,6 +560,8 @@ namespace bcbpqxx {
                 throw_openapi_error(dp.gd_genParm, "IIapi_getDescriptor", sql);
             }
 
+            // The descriptor tells us how many columns exist, their names, datatypes,
+            // and buffer sizes. Build stable name metadata once and share it across rows.
             const std::size_t count = dp.gd_descriptorCount;
             output->columns.reserve(count);
             auto names = std::make_shared<std::unordered_map<std::string, std::size_t>>();
@@ -407,6 +573,8 @@ namespace bcbpqxx {
             }
 
             if (count > 0) {
+                // Allocate one reusable OpenAPI buffer per result column. The buffers
+                // are refilled for each fetched row and immediately decoded into strings.
                 std::vector<std::vector<unsigned char>> buffers(count);
                 std::vector<IIAPI_DATAVALUE> values(count);
                 for (std::size_t i = 0; i < count; ++i) {
@@ -417,6 +585,8 @@ namespace bcbpqxx {
                     values[i].dv_value = buffers[i].data();
                 }
 
+                // Fetch one row at a time. This keeps the OpenAPI interaction simple;
+                // each fetched row is copied into the materialized result before reuse.
                 while (true) {
                     IIAPI_GETCOLPARM gp{};
                     gp.gc_stmtHandle = statement;
@@ -458,6 +628,8 @@ namespace bcbpqxx {
     }
 
     void work::commit() {
+        // OpenAPI creates the transaction lazily when the first statement executes,
+        // so a work object with no statements has no transaction handle to commit.
         if (finished_) return;
         if (transaction_) {
             IIAPI_COMMITPARM p{};
@@ -470,6 +642,8 @@ namespace bcbpqxx {
     }
 
     void work::abort() {
+        // Rollback mirrors commit and is also safe for a work object that never
+        // executed a statement (transaction_ remains null in that case).
         if (finished_) return;
         if (transaction_) {
             IIAPI_ROLLBACKPARM p{};

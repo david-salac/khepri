@@ -12,7 +12,7 @@
 
 /**
 * Generic application utilities needed across various solutions. 
-*   Version: 1.0.0
+*   Version: 1.0.0.1
 */
 namespace CommonUtils {
     /**
@@ -105,4 +105,17 @@ namespace CommonUtils {
     * Provides a safe way to unset environment variable values for both Unix and Windows systems.
     */
     void safe_unset_env(std::string_view name);
+
+    /**
+     * @brief Executes a command using the system command processor.
+     *
+     * Runs the specified command via std::system() and checks its termination
+     * status in a platform-appropriate manner.
+     *
+     * @param command Command to execute.
+     * @return true if the command terminates normally with exit code 0;
+     *         false if execution fails, the command returns a non-zero exit code,
+     *         or the process terminates abnormally.
+     */
+    bool run_command(std::string_view command);
 }

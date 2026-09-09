@@ -7,6 +7,7 @@
 #include <sstream>
 #include <iomanip>
 #include <stdexcept>
+#include <charconv>
 #include <chrono>
 #if defined(__GNUC__) && (__GNUC__ == 12)
 // To support legacy GNU compiler (version 12), should be removed with version 14
@@ -34,7 +35,7 @@
 
 /**
 * Generic connectors capable of working with both PostgreSQL and Actian Ingres databases, either separately or simultaneously.
-*   Version: 1.3.0
+*   Version: 1.4.0.0
 */
 namespace Connectors {
 
@@ -318,12 +319,40 @@ namespace Connectors {
         /**
         * Converts string to insertable/quiarable entity
         */
+        virtual std::string to_sql_string(std::string_view in_string) const = 0;
         virtual std::string to_sql_string(const std::string& in_string) const = 0;
         virtual std::string to_sql_string(const std::optional<std::string>& in_string) const = 0;
         virtual std::string to_sql_string(const std::vector<unsigned char>& bytes) const = 0;
         virtual std::string to_sql_string(const std::optional<std::vector<unsigned char>>& bytes) const = 0;
         virtual std::string to_sql_string(const std::optional<int>& value) const = 0;
         virtual std::string bool_to_sql_string(const std::optional<bool>& value) const = 0;
+        /**
+        * Check whether the string input is a number, if so, returns identity, if not, throws exception.
+        */
+        inline static std::string_view as_number_string(std::string_view sv)
+        {
+            if (sv.empty())
+                throw std::invalid_argument("not a number");
+
+            // Integer
+            long long integer{};
+            auto [end, ec] = std::from_chars(
+                sv.data(), sv.data() + sv.size(), integer);
+
+            if (ec == std::errc{} && end == sv.data() + sv.size())
+                return sv;  // Original string, unchanged
+
+            // Floating point
+            double floating{};
+            auto [float_end, float_ec] = std::from_chars(
+                sv.data(), sv.data() + sv.size(), floating);
+
+            if (float_ec == std::errc{} &&
+                float_end == sv.data() + sv.size())
+                return sv;  // Original string, unchanged
+
+            throw std::invalid_argument("not a number");
+        }
         inline virtual std::string to_sql_string(const std::optional <Timestamp>& value) const = 0;
         inline virtual std::vector<unsigned char> string_byte_array_to_vector(const std::string& str) const {
             return string_byte_array_to_vector(str);
@@ -331,11 +360,11 @@ namespace Connectors {
         /**
         * Returns a SQL-formated function for decrypting, e.g. AES_DECRYPT(<COL>, <PWD>, 256) as a string
         */
-        virtual std::string decrypt_function_expression(std::string column, std::string password) const = 0;
+        virtual std::string decrypt_function_expression(std::string_view column, std::string_view password) const = 0;
         /**
         * Returns a SQL-formated function for encrypting, e.g. AES_ENCRYPT(<COL>, <PWD>, 256) as a string
         */
-        virtual std::string encrypt_function_expression(std::string column, std::string password) const = 0;
+        virtual std::string encrypt_function_expression(std::string_view column, std::string_view password) const = 0;
 
         /**
          * Returns the next value from the specified sequence.
@@ -439,6 +468,15 @@ namespace Connectors {
             }
             return to_null();
         }
+        inline virtual std::string to_sql_string(std::string_view in_string) const override {
+            std::string out = "'";
+            for (char c : in_string) {
+                if (c == '\'') out += "''";
+                else           out += c;
+            }
+            out += "'";
+            return out;
+        }
         inline virtual std::string to_sql_string(const std::optional <Timestamp>& value) const override {
             if (!value) {
                 return to_null();
@@ -449,11 +487,11 @@ namespace Connectors {
             output << "'";
             return output.str();
         }
-        inline virtual std::string decrypt_function_expression(std::string column, std::string password) const override {
-            return std::format("VARCHAR(AES_DECRYPT({}, '{}', 256))", column, password);
+        inline virtual std::string decrypt_function_expression(std::string_view column, std::string_view password) const override {
+            return std::format("VARCHAR(AES_DECRYPT({}, {}, 256))", column, to_sql_string(password));
         }
-        inline virtual std::string encrypt_function_expression(std::string column, std::string password) const override {
-            return std::format("AES_ENCRYPT({}, '{}', 256)", column, password);
+        inline virtual std::string encrypt_function_expression(std::string_view column, std::string_view password) const override {
+            return std::format("AES_ENCRYPT({}, {}, 256)", column, to_sql_string(password));
         }
 
         virtual int next_value_in_sequence(std::string_view sequence_name) override;
@@ -507,6 +545,15 @@ namespace Connectors {
         inline virtual std::string to_sql_now() const override {
             return "NOW()";
         }
+        inline virtual std::string to_sql_string(std::string_view in_string) const override {
+            std::string out = "'";
+            for (char c : in_string) {
+                if (c == '\'') out += "''";
+                else           out += c;
+            }
+            out += "'";
+            return out;
+        }
         inline virtual std::string to_sql_string(const std::string& in_string) const override {
             std::string out = "'";
             for (char c : in_string) {
@@ -544,11 +591,11 @@ namespace Connectors {
             output << "'";
             return output.str();
         }
-        inline virtual std::string decrypt_function_expression(std::string column, std::string password) const override {
-            return std::format("pgp_sym_decrypt({}, '{}')", column, password);
+        inline virtual std::string decrypt_function_expression(std::string_view column, std::string_view password) const override {
+            return std::format("pgp_sym_decrypt({}, {})", column, to_sql_string(password));
         }
-        inline virtual std::string encrypt_function_expression(std::string column, std::string password) const override {
-            return std::format("pgp_sym_encrypt({}, '{}')", column, password);
+        inline virtual std::string encrypt_function_expression(std::string_view column, std::string_view password) const override {
+            return std::format("pgp_sym_encrypt({}, {})", column, to_sql_string(password));
         }
 
         virtual int next_value_in_sequence(std::string_view sequence_name) override;

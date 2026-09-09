@@ -7,6 +7,12 @@
 #include <stdexcept>
 #include <string_view>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/wait.h>
+#endif
+
 
 std::optional<std::string> CommonUtils::safe_get_env(std::string_view key) {
 #if defined(_MSC_VER) // If compiling with Microsoft Visual Studio
@@ -82,5 +88,31 @@ void CommonUtils::safe_unset_env(std::string_view name)
     if (::unsetenv(name_copy.c_str()) != 0) {
         throw std::runtime_error("unsetenv failed");
     }
+#endif
+}
+
+bool CommonUtils::run_command(std::string_view command) {
+    const int result = std::system(command.data());
+
+    if (result == -1) {
+        // Failed to start the shell / command processor.
+        return false;
+    }
+
+#ifdef _WIN32
+
+    // On Windows, system() returns the command interpreter's exit status.
+    return result == 0;
+
+#else
+
+    // POSIX: result is an encoded wait status.
+    if (!WIFEXITED(result)) {
+        // Process was terminated abnormally, e.g. by a signal.
+        return false;
+    }
+
+    return WEXITSTATUS(result) == 0;
+
 #endif
 }

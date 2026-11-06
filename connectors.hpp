@@ -35,9 +35,9 @@
 
 /**
 * Generic connectors capable of working with both PostgreSQL and Actian Ingres databases, either separately or simultaneously.
-*   Version: 1.4.0.0
 */
 namespace Connectors {
+    inline const std::string KHEPRI_VERSION = "1.0.0.4";
 
     /**
     * To convert back from binary vector represented by hexadecimal string
